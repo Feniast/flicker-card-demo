@@ -18,33 +18,23 @@ const items = [
     background: '#fec864',
     content: 'Olá',
     id: 5,
-    title: 'Animation is good but state management and orchestration is difficult sometimes'
+    title: 'State management and orchestration of animation is difficult sometimes'
   }
 ]
 
-const to = (i) => ({ x: 0, y: 0, scale: 1, rot: i === 0 ? 0 : -15 + Math.random() * 30, delay: i * 50, config: config.default })
+const log = console.log.bind(console)
 
-const from = (i) => ({ x: 200 + window.innerWidth, rot: 0, scale: 1, y: 0 })
-
-const trans = (r, s) => `perspective(1500px) rotateX(5deg) rotateZ(${r}deg) scale(${s})`
-
-/* interface SlideOptions {
-  count: number,
-  beforeNext: (idx: number, autoTrigger: boolean) -> boolean,
-  onNext: (newIdx: number, preIdx: number, autoTrigger: boolean) -> boolean,
-  onPrev: (idx: number) -> any,
-  loop: boolean,
-  beforeLoop: (autoTrigger) -> boolean,
-  onLoop: (autoTrigger) -> any,
-  auto: boolean,
-  autoInterval: number,
-  onProgress: (p: number) -> void 
-} */
+console.log = (...args) => {
+  if (process.NODE_ENV === 'production') {
+    return
+  }
+  log(new Date().toLocaleString(), ...args)
+}
 
 const defaultOptions = {
   beforeNext: () => true,
   onNext: () => {},
-  beforePrev: () => {},
+  beforePrev: () => true,
   onPrev: () => {},
   loop: false,
   beforeLoop: () => true,
@@ -54,12 +44,6 @@ const defaultOptions = {
   count: 0
 }
 
-const log = console.log.bind(console)
-
-console.log = (...args) => {
-  log(new Date().toLocaleString(), ...args)
-}
-
 const useSlide = (options = {}) => {
   const [idx, setIdx] = useState(0)
   const rafId = useRef()
@@ -67,31 +51,46 @@ const useSlide = (options = {}) => {
   const playing = useRef(false)
   const locking = useRef(null)
   const pausing = useRef(false)
-  const nextRef = useRef()
+  const navigateRef = useRef()
   const settings = useRef()
-  settings.current = Object.assign({}, defaultOptions, options);
+  settings.current = Object.assign({}, defaultOptions, options)
 
-  const next = useCallback(
-    async (autoTrigger) => {
-      const { count, onNext, onLoop, loop, beforeNext, beforeLoop } = settings.current
-      if (count <= 0) return
-      let newIdx = idx + 1
-      let type = 'next'
+  const navigate = useCallback(
+    async (dir, autoTrigger) => {
+      const { count, onNext, onLoop, loop, beforeNext, beforeLoop, beforePrev, onPrev } = settings.current
+      if (count <= 0 || dir === 0) return
+      let newIdx = dir > 0 ? idx + 1 : idx - 1
+      let type = dir > 0 ? 'next' : 'prev'
       if (newIdx >= count) {
         if (!loop) return
         newIdx = 0
         type = 'loop'
+      } else if (newIdx < 0) {
+        if (!loop) return
+        newIdx = count - 1
+        type = 'loop'
       }
-      console.log('next', newIdx, idx)
+      console.log(`navigate new idx ${newIdx}, old idx ${idx}`)
 
       locking.current = newIdx
       try {
-        const canDo = type === 'next' ? beforeNext(newIdx, idx, autoTrigger) : beforeLoop(newIdx, idx, autoTrigger)
-        if (canDo !== false) {
+        const shouldUpdate =
+          type === 'next'
+            ? beforeNext(newIdx, idx, autoTrigger)
+            : type === 'prev'
+            ? beforePrev(newIdx, idx, autoTrigger)
+            : beforeLoop(newIdx, idx, autoTrigger)
+        if (shouldUpdate !== false) {
           setIdx(newIdx)
           // clear tick here because it is certain to do navigation, that means auto play is cancelled
           resetProgressTicker()
-          await Promise.resolve(type === 'next' ? onNext(newIdx, idx, autoTrigger) : onLoop(newIdx, idx, autoTrigger))
+          await Promise.resolve(
+            type === 'next'
+              ? onNext(newIdx, idx, autoTrigger)
+              : type === 'prev'
+              ? onPrev(newIdx, idx, autoTrigger)
+              : onLoop(newIdx, idx, autoTrigger)
+          )
         }
       } finally {
         // unlock before auto start, also check if other operations has overwritten this locking key
@@ -105,7 +104,7 @@ const useSlide = (options = {}) => {
     [idx]
   )
 
-  nextRef.current = next
+  navigateRef.current = navigate
 
   const resetProgressTicker = useCallback(() => {
     rafId.current && cancelAnimationFrame(rafId.current)
@@ -116,10 +115,9 @@ const useSlide = (options = {}) => {
 
   const startAutoPlay = useCallback(() => {
     const { autoInterval, auto, count, onProgress } = settings.current
-    // prevent multiple call to trigger multiple ticking
-    // prevent auto play when `next` or `prev` task has not finished
+    // use playing to prevent multiple calls to trigger multiple ticking
+    // prevent auto play when `next` or `prev` task has not finished, that is `locking`
     if (!auto || count <= 0 || playing.current || locking.current != null || pausing.current) return
-    console.log('start auto play')
     playing.current = true
     prevTime.current = Date.now()
     const tick = () => {
@@ -131,7 +129,7 @@ const useSlide = (options = {}) => {
       } else {
         // stop auto play to make `next` working properly because `next` is not a sync op
         stopAutoPlay()
-        nextRef.current(true)
+        navigateRef.current(1, true)
       }
     }
     rafId.current = requestAnimationFrame(tick)
@@ -179,8 +177,9 @@ const useSlide = (options = {}) => {
         pausing.current = true
         stopAutoPlay()
       },
-      next: () => next(false)
-    };
+      next: () => navigate(1, false),
+      prev: () => navigate(-1, false)
+    }
 
     Object.defineProperties(r, {
       total: {
@@ -195,10 +194,16 @@ const useSlide = (options = {}) => {
       }
     })
 
-    return r;
-  }, [idx]);
-  return result;
+    return r
+  }, [idx])
+  return result
 }
+
+const to = (i) => ({ x: 0, y: 0, scale: i === 0 ? 1 : 0.95, rot: i === 0 ? 0 : -15 + Math.random() * 30, delay: i * 50 })
+
+const from = (i) => ({ x: 200 + window.innerWidth, rot: 0, scale: 1, y: 0 })
+
+const trans = (r, s) => `perspective(1500px) rotateX(5deg) rotateZ(${r}deg) scale(${s})`
 
 const delay = (fn, time = 5000) =>
   new Promise((resolve) =>
@@ -229,14 +234,14 @@ const Slider = () => {
   const progressRef = useRef()
   const [shuffling, setShuffling] = useState(false)
 
-  const { current, pause, play, next, restart, reset } = useSlide({
-    count: 5,
+  const { current, pause, play, next, prev, reset } = useSlide({
+    count: slideItems.length,
     onNext: (newIdx, prevIdx) => {
       const hasGone = gone.has(prevIdx)
       if (!hasGone) {
         gone.add(prevIdx)
+        rerender()
       }
-      rerender()
       // fly previous item only when it has not gone, for example, not triggered by dragging
       // make new item return to normal state that is no rotation
       return Promise.race([
@@ -246,7 +251,26 @@ const Slider = () => {
             return { x, rot: 0, scale: 1, config: { friction: 50, tension: 200 } }
           }
           if (newIdx === i) {
-            return { rot: 0, scale: 1, config: { friction: 50, tension: 200 } }
+            return { rot: 0, scale: 1 }
+          }
+        }),
+        delay(() => {}, 500)
+      ])
+    },
+    onPrev: (newIdx, oldIdx) => {
+      const hasGone = gone.has(newIdx)
+      if (hasGone) {
+        gone.delete(newIdx)
+        rerender()
+      }
+      return Promise.race([
+        set((i) => {
+          // let previous item back, current item back to `to` state
+          if (newIdx === i && hasGone) {
+            return { x: 0, rot: 0, scale: 1, config: { friction: 50, tension: 200 } }
+          }
+          if (oldIdx === i) {
+            return to(i)
           }
         }),
         delay(() => {}, 500)
@@ -270,7 +294,8 @@ const Slider = () => {
 
   const allGone = gone.size === items.length
 
-  const transition = useTransition(allGone || shuffling ? {} : slideItems[current], {
+  // when items are all gone, title is empty
+  const titleTransition = useTransition(allGone || shuffling ? {} : slideItems[current], {
     from: {
       position: 'absolute',
       opacity: 0,
@@ -287,16 +312,20 @@ const Slider = () => {
       config: config.stiff
     }
   })
-  const bind = useDrag(({ args: [index], down, movement: [mx], distance, direction: [dirX], velocity, first, last }) => {
+
+  const bind = useDrag(({ args: [index], down, movement: [mx], velocity, first, last }) => {
     if (first) {
       pause()
     }
-    const trigger = velocity > 0.2
-    const dir = dirX < 0 ? -1 : 1
+    const trigger = velocity > 0.2 || Math.abs(mx) > 100
+    const dir = mx < 0 ? -1 : 1
     if (!down && trigger) {
+      // add to gone here must be executed before next, because next will trigger the animation again in our onNext callback
+      // apparently we don't want that happen because we execute fly animation below manually triggered by dragging
+      // so add to gone here and our onNext callback will skip its animation
       gone.add(index)
-      next()
       rerender()
+      next()
     }
     if (last) {
       play()
@@ -340,7 +369,7 @@ const Slider = () => {
       })
   }
 
-  // to keep background use last item state when slides is complete and is before entering the next loop
+  // use last active item bg as section background
   const backgroundColor = allGone ? slideItems[items.length - 1].background : slideItems[gone.size].background
   return (
     <div className="section" style={{ backgroundColor }}>
@@ -358,7 +387,7 @@ const Slider = () => {
       </div>
       <div className="slide-content">
         <div className="slide-header">
-          {transition((values, item) => (
+          {titleTransition((values, item) => (
             <animated.h2 className="slide-title" key={item.id || 'none'} style={values}>
               {item.title || ''}
             </animated.h2>
@@ -372,6 +401,9 @@ const Slider = () => {
         <div>
           <button onClick={() => play()}>start</button>
           <button onClick={() => pause()}>pause</button>
+          <button onClick={() => prev()} disabled={shuffling || current === 0}>
+            prev
+          </button>
           <button onClick={() => next()} disabled={shuffling}>
             next
           </button>
@@ -380,8 +412,6 @@ const Slider = () => {
           </button>
         </div>
       </div>
-
-      {/* <div>{progress}</div> */}
     </div>
   )
 }
