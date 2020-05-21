@@ -430,7 +430,7 @@ const Slider = () => {
           <button onClick={() => next()} disabled={shuffling || allGone}>
             next
           </button>
-          <button onClick={() => shuffleItems()} disabled={shuffling}>
+          <button onClick={() => shuffleItems()} disabled={shuffling || allGone}>
             shuffle
           </button>
         </div>
