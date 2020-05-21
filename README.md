@@ -17,7 +17,7 @@ yarn start
 5. 滑动切换
 6. 手动前后切换
 
-![image](https://github.com/Feniast/flicker-card-demo/blob/master/flicker-cards.gif)
+![image](https://github.com/Feniast/flicker-card-demo/blob/master/flicker-cards-demo.gif)
 
 ##
 PS: 本人前端菜狗，做着玩，无意义
