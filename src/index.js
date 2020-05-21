@@ -232,15 +232,29 @@ const Slider = () => {
   const gone = useMemo(() => new Set(), [])
   const [props, set] = useSprings(slideItems.length, (i) => ({ ...to(i), from: from(i) }))
   const progressRef = useRef()
-  const [shuffling, setShuffling] = useState(false)
+  const [shuffling, setShuffling] = useState(false);
+
+  const addGone = useCallback((i) => {
+    gone.add(i);
+    rerender();
+  }, []);
+
+  const deleteGone = useCallback((i) => {
+    gone.delete(i)
+    rerender()
+  }, []);
+
+  const clearGone = useCallback(() => {
+    gone.clear();
+    rerender();
+  }, []);
 
   const { current, pause, play, next, prev, reset } = useSlide({
     count: slideItems.length,
     onNext: (newIdx, prevIdx) => {
       const hasGone = gone.has(prevIdx)
       if (!hasGone) {
-        gone.add(prevIdx)
-        rerender()
+        addGone(prevIdx)
       }
       // fly previous item only when it has not gone, for example, not triggered by dragging
       // make new item return to normal state that is no rotation
@@ -260,14 +274,13 @@ const Slider = () => {
     onPrev: (newIdx, oldIdx) => {
       const hasGone = gone.has(newIdx)
       if (hasGone) {
-        gone.delete(newIdx)
-        rerender()
+        deleteGone(newIdx);
       }
       return Promise.race([
         set((i) => {
           // let previous item back, current item back to `to` state
           if (newIdx === i && hasGone) {
-            return { x: 0, rot: 0, scale: 1, config: { friction: 50, tension: 200 } }
+            return { x: 0, rot: 0, scale: 1, config: { friction: 50, tension: 300 } }
           }
           if (oldIdx === i) {
             return to(i)
@@ -278,11 +291,22 @@ const Slider = () => {
     },
     onLoop: (newIdx, idx, autoTrigger) => {
       const wait = gone.size !== items.length ? 0 : 1000
-      return delay(() => {
-        gone.clear()
-        rerender()
+      let t = Promise.resolve();
+      if (!gone.has(idx) && !autoTrigger) {
+        // fly it first
+        addGone(idx);
+        t = set(i => {
+          if (i !== idx) return;
+          const x = 200 + window.innerWidth
+          return { x, rot: 0, scale: 1, config: { friction: 50, tension: 200 } }
+        });
+      }
+      return t.then(() => delay(() => {
+        delay(() => {
+          clearGone();
+        }, 500);
         return set((i) => to(i))
-      }, wait)
+      }, wait));
     },
     loop: true,
     auto: true,
@@ -323,8 +347,7 @@ const Slider = () => {
       // add to gone here must be executed before next, because next will trigger the animation again in our onNext callback
       // apparently we don't want that happen because we execute fly animation below manually triggered by dragging
       // so add to gone here and our onNext callback will skip its animation
-      gone.add(index)
-      rerender()
+      addGone(index);
       next()
     }
     if (last) {
@@ -357,7 +380,7 @@ const Slider = () => {
     })
       .then(() => {
         // clear gone here to apply new background color after shuffling
-        gone.clear()
+        clearGone();
         setSlideItems(shuffle(slideItems))
         // keep set shuffling false here to make it sync with items re-entering, 500 is a magic number
         // if move it to the next promise chain, it will not execute before the re-entering animation fully complete
@@ -404,7 +427,7 @@ const Slider = () => {
           <button onClick={() => prev()} disabled={shuffling || current === 0}>
             prev
           </button>
-          <button onClick={() => next()} disabled={shuffling}>
+          <button onClick={() => next()} disabled={shuffling || allGone}>
             next
           </button>
           <button onClick={() => shuffleItems()} disabled={shuffling}>
